@@ -204,27 +204,6 @@ func main() {
 		log.Info("Repository already exists..use this one")
 	}
 
-	/*log.Info("Connecting with Github...")
-
-	var githubReleaseInfo GithubReleaseInfo
-	githubReleaseInfo.AccessToken = MustGetEnv("GITHUB_ACCESS_TOKEN")
-	githubReleaseInfo.ProjectOwner = MustGetEnv("GITHUB_PROJECT_OWNER")
-	githubReleaseInfo.Repository = MustGetEnv("GITHUB_REPOSITORY")
-
-
-	repoRelease := &github.RepositoryRelease {
-		Name: github.String("test"),
-		Body: github.String("aaaaa"),
-		TagName: github.String("v0.1"),
-	}
-
-	githubReleaseInfo.ReleaseInfo = repoRelease
-
-	err = createGithubRelease(githubReleaseInfo)
-	if err != nil {
-		log.Fatal("Couldn't create github release: ", err.Error())
-	}*/
-
 	services := map[string]string{
 		"api":                    "api",
 		"web":                    "web",
@@ -233,6 +212,7 @@ func main() {
 		"trendinglabelsworker":   "trendinglabelsworker",
 		"dataprocessor":          "dataprocessor",
 		"postgres":               "db",
+		"testing":				  "testing",
 	}
 
 	cnt := 1
@@ -241,7 +221,7 @@ func main() {
 		imageTagLatest := dockerUser + "/imagemonkey-" + name + ":latest"
 		imageTagVersion := dockerUser + "/imagemonkey-" + name + ":" + ver
 
-		err = retry(2, 2*time.Second, func() (err error) {
+		err = retry(5, 10*time.Second, func() (err error) {
 			err = buildDockerImage(service, imageTagLatest, false)
 			return
 		})
@@ -274,5 +254,31 @@ func main() {
 		}
 
 		cnt++
+	}
+
+	log.Info("Connecting with Github...")
+
+	var githubReleaseInfo GithubReleaseInfo
+	githubReleaseInfo.AccessToken = MustGetEnv("GITHUB_ACCESS_TOKEN")
+	githubReleaseInfo.ProjectOwner = MustGetEnv("GITHUB_PROJECT_OWNER")
+	githubReleaseInfo.Repository = MustGetEnv("GITHUB_REPOSITORY")
+
+	detailedReleaseInfo := "# Docker Images\n\n"
+	for _, name := range services {
+		detailedReleaseInfo += "[" + "imagemonkey-" + name + "]" + "(https://hub.docker.com/r/" + dockerUser + "/imagemonkey-" + name + ")"
+		detailedReleaseInfo += "\n"
+	}
+
+	repoRelease := &github.RepositoryRelease {
+		Name: github.String("v"+ver),
+		Body: github.String(detailedReleaseInfo),
+		TagName: github.String("v"+ver),
+	}
+
+	githubReleaseInfo.ReleaseInfo = repoRelease
+
+	err = createGithubRelease(githubReleaseInfo)
+	if err != nil {
+		log.Fatal("Couldn't create github release: ", err.Error())
 	}
 }
