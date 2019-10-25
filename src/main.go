@@ -212,7 +212,8 @@ func main() {
 		"trendinglabelsworker":   "trendinglabelsworker",
 		"dataprocessor":          "dataprocessor",
 		"postgres":               "db",
-		"testing":				  "testing",
+		"testing":                "testing",
+		"pgbouncer":              "pgbouncer",
 	}
 
 	cnt := 1
@@ -237,7 +238,7 @@ func main() {
 			log.Fatal("Couldn't tag ", imageTagVersion, " docker image: ", err.Error())
 		}
 
-		err = retry(2, 2*time.Second, func() (err error) {
+		err = retry(10, 2*time.Second, func() (err error) {
 			err = pushDockerImage(imageTagLatest)
 			return
 		})
@@ -269,10 +270,10 @@ func main() {
 		detailedReleaseInfo += "\n"
 	}
 
-	repoRelease := &github.RepositoryRelease {
-		Name: github.String("v"+ver),
-		Body: github.String(detailedReleaseInfo),
-		TagName: github.String("v"+ver),
+	repoRelease := &github.RepositoryRelease{
+		Name:    github.String("v" + ver),
+		Body:    github.String(detailedReleaseInfo),
+		TagName: github.String("v" + ver),
 	}
 
 	githubReleaseInfo.ReleaseInfo = repoRelease
