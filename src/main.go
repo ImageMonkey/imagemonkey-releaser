@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"github.com/google/go-github/github"
 	log "github.com/sirupsen/logrus"
@@ -56,13 +55,13 @@ func retry(attempts int, sleep time.Duration, f func() error) (err error) {
 	return fmt.Errorf("after %d attempts, last error: %s", attempts, err)
 }
 
-func buildDockerImage(service string, name string, useCache bool) error {
+func buildDockerImage(service string, name string, useCache bool, baseDir string) error {
 	useCacheStr := ""
 	if !useCache {
 		useCacheStr = "--no-cache"
 	}
 	cmd := exec.Command("docker", "build", "-t", name, useCacheStr, "-f", "env/docker/Dockerfile."+service, ".")
-	cmd.Dir = "/tmp/source/"
+	cmd.Dir = baseDir
 	cmd.Env = os.Environ()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -162,68 +161,15 @@ func createGithubRelease(githubReleaseInfo GithubReleaseInfo) error {
 	return err
 }
 
-func main() {
-	version := flag.String("version", "", "Version")
-
-	flag.Parse()
-
-	ver := *version
-	if *version == "" {
-		ver = GetEnv("IMAGEMONKEY_VERSION")
-		if ver == "" {
-			log.Fatal("Please provide a valid version")
-		}
-	}
-
-	log.Info("ImageMonkey-Releaser started")
-
-	log.Info("Connecting to DockerHub...")
-	dockerUser := MustGetEnv("DOCKER_USER")
-	dockerPassword := MustGetEnv("DOCKER_PASSWORD")
-	err := loginToDockerHub(dockerUser, dockerPassword)
-	if err != nil {
-		log.Fatal("Couldn't connect to DockerHub: ", err.Error())
-	}
-
-	sourceCodeDir := "/tmp/source"
-	if _, err := os.Stat(sourceCodeDir); os.IsNotExist(err) {
-		log.Info("Checking out sourcecode to ", sourceCodeDir, "...")
-		_, err = git.PlainClone(sourceCodeDir, false, &git.CloneOptions{
-			URL:      MustGetEnv("GITHUB_REPOSITORY_URL"),
-			Progress: os.Stdout,
-		})
-
-		if err != nil {
-			log.Fatal("Couldn't clone repository ", MustGetEnv("GITHUB_REPOSITORY_URL"), ": ", err.Error())
-			err = os.RemoveAll(sourceCodeDir)
-			if err != nil {
-				log.Fatal("Couldn't remove ", sourceCodeDir, ": ", err.Error())
-			}
-		}
-	} else {
-		log.Info("Repository already exists..use this one")
-	}
-
-	services := map[string]string{
-		"api":                    "api",
-		"web":                    "web",
-		"statworker":             "statworker",
-		"blogsubscriptionworker": "blogsubscriptionworker",
-		"trendinglabelsworker":   "trendinglabelsworker",
-		"dataprocessor":          "dataprocessor",
-		"postgres":               "db",
-		"testing":                "testing",
-		"pgbouncer":              "pgbouncer",
-	}
-
+func buildTagAndPushDockerServices(dockerUser string, services map[string]string, sourceCodeDir string, ver string) {
 	cnt := 1
 	for service, name := range services {
 		log.Info("[", cnt, "/", len(services), "] Building ", service, " docker image")
 		imageTagLatest := dockerUser + "/imagemonkey-" + name + ":latest"
 		imageTagVersion := dockerUser + "/imagemonkey-" + name + ":" + ver
 
-		err = retry(5, 10*time.Second, func() (err error) {
-			err = buildDockerImage(service, imageTagLatest, false)
+		err := retry(5, 10*time.Second, func() (err error) {
+			err = buildDockerImage(service, imageTagLatest, false, sourceCodeDir)
 			return
 		})
 		if err != nil {
@@ -256,13 +202,13 @@ func main() {
 
 		cnt++
 	}
+}
 
-	log.Info("Connecting with Github...")
-
+func releaseDockerImagesToGithub(dockerUser string, githubRepository string, services map[string]string, ver string) {
 	var githubReleaseInfo GithubReleaseInfo
 	githubReleaseInfo.AccessToken = MustGetEnv("GITHUB_ACCESS_TOKEN")
 	githubReleaseInfo.ProjectOwner = MustGetEnv("GITHUB_PROJECT_OWNER")
-	githubReleaseInfo.Repository = MustGetEnv("GITHUB_REPOSITORY")
+	githubReleaseInfo.Repository = MustGetEnv(githubRepository)
 
 	detailedReleaseInfo := "# Docker Images\n\n"
 	for _, name := range services {
@@ -278,8 +224,85 @@ func main() {
 
 	githubReleaseInfo.ReleaseInfo = repoRelease
 
-	err = createGithubRelease(githubReleaseInfo)
+	err := createGithubRelease(githubReleaseInfo)
 	if err != nil {
 		log.Fatal("Couldn't create github release: ", err.Error())
 	}
+}
+
+func cloneRepository(repoName string, repoUrl string, sourceCodeDir string, checkoutDir string) {
+	log.Info("Checking out ", repoName ," sourcecode to ", checkoutDir, "...")
+	_, err := git.PlainClone(checkoutDir, false, &git.CloneOptions{
+		URL:      repoUrl,
+		Progress: os.Stdout,
+	})
+
+	if err != nil {
+		log.Fatal("Couldn't clone repository ", repoUrl, ": ", err.Error())
+		err = os.RemoveAll(sourceCodeDir)
+		if err != nil {
+			log.Fatal("Couldn't remove ", sourceCodeDir, ": ", err.Error())
+		}
+	}
+}
+
+func main() {
+	version := GetEnv("IMAGEMONKEY_VERSION")
+	if version == "" {
+		log.Fatal("Please provide a valid version")
+	}
+
+	playgroundVersion := GetEnv("IMAGEMONKEY_PLAYGROUND_VERSION")
+	if playgroundVersion == "" {
+		log.Fatal("Please provide a valid playground version")
+	}
+
+	log.Info("ImageMonkey-Releaser started")
+
+	log.Info("Connecting to DockerHub...")
+	dockerUser := MustGetEnv("DOCKER_USER")
+	dockerPassword := MustGetEnv("DOCKER_PASSWORD")
+	err := loginToDockerHub(dockerUser, dockerPassword)
+	if err != nil {
+		log.Fatal("Couldn't connect to DockerHub: ", err.Error())
+	}
+
+	sourceCodeDir := "/tmp/source"
+	coreSourceCodeDir := sourceCodeDir + "/core/"
+	playgroundSourceCodeDir := sourceCodeDir + "/playground/"
+
+
+	if _, err := os.Stat(sourceCodeDir); os.IsNotExist(err) {
+		cloneRepository(MustGetEnv("GITHUB_REPOSITORY"), MustGetEnv("GITHUB_REPOSITORY_URL"), sourceCodeDir, coreSourceCodeDir)
+		cloneRepository(MustGetEnv("GITHUB_PLAYGROUND_REPOSITORY"), MustGetEnv("GITHUB_PLAYGROUND_REPOSITORY_URL"), sourceCodeDir, playgroundSourceCodeDir)
+	} else {
+		log.Info("Repository already exists..use this one")
+	}
+
+	coreServices := map[string]string{
+		"api":                    "api",
+		"web":                    "web",
+		"statworker":             "statworker",
+		"blogsubscriptionworker": "blogsubscriptionworker",
+		"trendinglabelsworker":   "trendinglabelsworker",
+		"dataprocessor":          "dataprocessor",
+		"postgres":               "db",
+		"testing":                "testing",
+		"pgbouncer":              "pgbouncer",
+	}
+
+	playgroundServices := map[string]string{
+		"grabcut":                    "grabcut",
+	}
+
+
+	buildTagAndPushDockerServices(dockerUser, coreServices, coreSourceCodeDir, version)
+	buildTagAndPushDockerServices(dockerUser, playgroundServices, playgroundSourceCodeDir, playgroundVersion)
+
+	log.Info("Connecting with Github...")
+
+	releaseDockerImagesToGithub(dockerUser, "GITHUB_REPOSITORY", coreServices, version)
+	releaseDockerImagesToGithub(dockerUser, "GITHUB_PLAYGROUND_REPOSITORY", playgroundServices, playgroundVersion)
+
+	log.Info("Successfully released imagemonkey-core v", version, " and imagemonkey-playground v", playgroundVersion)
 }
