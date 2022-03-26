@@ -1,4 +1,4 @@
-FROM golang:1.12.7-buster
+FROM golang:1.17.7-buster
 
 RUN mkdir -p /home/go/bin
 ENV GOPATH=/home/go
@@ -17,10 +17,12 @@ RUN add-apt-repository \
 
 RUN apt-get update && apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io
 
-COPY src/main.go /tmp/main.go
-COPY src/go.mod /tmp/go.mod
+RUN mkdir -p /tmp/src
+COPY src/main.go /tmp/src/main.go
+COPY src/go.mod /tmp/src/go.mod
+COPY src/go.sum /tmp/src/go.sum
 
-RUN cd /tmp/ && go build main.go && cp /tmp/main /home/go/bin/imagemonkeyreleaser
+RUN cd /tmp/src && go build main.go && cp /tmp/src/main /home/go/bin/imagemonkeyreleaser
 WORKDIR /home/go/bin/
 
 ENTRYPOINT ["/home/go/bin/imagemonkeyreleaser"]

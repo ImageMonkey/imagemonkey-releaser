@@ -280,6 +280,8 @@ func main() {
 	}
 
 	coreServices := map[string]string{
+		"buildbase":              "buildbase",
+		"buildbase2":             "buildbase2",
 		"api":                    "api",
 		"web":                    "web",
 		"statworker":             "statworker",
